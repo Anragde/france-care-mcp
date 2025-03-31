@@ -1,0 +1,1 @@
+"@anragde:registry=https://npm.pkg.github.com/"  add .npmrcgit commit -m "Ajout configuration .npmrc"git push
