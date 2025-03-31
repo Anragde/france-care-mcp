@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "name": "france-care-mcp",
   "version": "1.0.0",
   "main": "index.js",
@@ -18,3 +19,25 @@
     "ws": "^8.5.0"
   }
 }
+=======
+  "name": "@anragde/france-care-mcp",
+  "version": "1.1.0",
+  "description": "Serveur MCP de débogage pour France Care Medical Service",
+  "main": "mcp-server.js",
+  "bin": {
+    "france-care-mcp": "./mcp-server.js"
+  },
+  "scripts": {
+    "start": "node mcp-server.js",
+    "debug": "DEBUG=true node mcp-server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.17.1",
+    "ws": "^8.5.0"
+  },
+  "keywords": ["mcp", "medical", "france-care", "debug"],
+  "author": "Anragde",
+  "license": "MIT"
+}
+>>>>>>> b111ecec724c39aeed67cb0466bbbb8655f8f275
