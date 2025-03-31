@@ -1,9 +1,52 @@
 #!/usr/bin/env node
 
-const express = require('express');
+const express = require('cors');
 const cors = require('cors');
 const http = require('http');
 const { WebSocketServer } = require('ws');
+
+// Configuration de débogage avancé
+const DEBUG = true;
+
+// Fonction de log de débogage
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log('[DEBUG]', ...args);
+  }
+}
+
+// Fonction de parsing sécurisé des messages
+function safeParseMessage(message) {
+  // Convertir le message en chaîne et nettoyer
+  const messageStr = message.toString().trim();
+  
+  debugLog('Message brut reçu:', messageStr);
+  debugLog('Type de message:', typeof messageStr);
+  debugLog('Longueur du message:', messageStr.length);
+
+  try {
+    // Essayer de trouver et parser un JSON
+    const jsonMatches = messageStr.match(/\{.*\}/g);
+    
+    if (jsonMatches) {
+      for (const match of jsonMatches) {
+        try {
+          const parsedMessage = JSON.parse(match);
+          debugLog('Message JSON parsé avec succès:', JSON.stringify(parsedMessage, null, 2));
+          return parsedMessage;
+        } catch (parseError) {
+          debugLog('Erreur de parsing pour ce JSON:', parseError);
+        }
+      }
+    }
+
+    debugLog('Aucun JSON valide trouvé');
+    return null;
+  } catch (error) {
+    debugLog('Erreur globale de parsing:', error);
+    return null;
+  }
+}
 
 // Données France Care
 const franceCareInfo = {
@@ -35,19 +78,40 @@ function startServer(port = 3000) {
   const server = http.createServer(app);
 
   // Création du serveur WebSocket pour la communication MCP
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ 
+    server,
+    // Configuration pour gérer différents types de connexions
+    clientTracking: true,
+    verifyClient: (info, done) => {
+      debugLog('Nouvelle tentative de connexion', info.req.headers);
+      done(true);
+    }
+  });
 
-  wss.on('connection', (ws) => {
-    console.log('Client connecté');
+  // Gestion globale des erreurs
+  process.on('uncaughtException', (error) => {
+    console.error('Erreur non capturée:', error);
+  });
+
+  wss.on('connection', (ws, req) => {
+    debugLog('Nouvelle connexion WebSocket établie');
+    debugLog('Adresse IP du client:', req.socket.remoteAddress);
 
     ws.on('message', (message) => {
-      try {
-        // Parsing du message JSON
-        const jsonMessage = JSON.parse(message.toString());
-        console.log('Message reçu:', JSON.stringify(jsonMessage, null, 2));
+      debugLog('Message reçu sur le serveur');
+      
+      // Parser le message de manière sécurisée
+      const jsonMessage = safeParseMessage(message);
+      
+      if (!jsonMessage) {
+        debugLog('Impossible de parser le message');
+        return;
+      }
 
+      try {
         // Répondre aux requêtes selon le protocole MCP
         if (jsonMessage.method === 'initialize') {
+          debugLog('Requête d\'initialisation reçue');
           ws.send(JSON.stringify({
             jsonrpc: '2.0',
             id: jsonMessage.id,
@@ -58,7 +122,7 @@ function startServer(port = 3000) {
               },
               serverInfo: {
                 name: "France Care MCP",
-                version: "1.0.0"
+                version: "1.1.0"
               }
             }
           }));
@@ -66,7 +130,7 @@ function startServer(port = 3000) {
         else if (jsonMessage.method === 'query') {
           // Extraire le texte de la requête
           const query = jsonMessage.params?.query?.text || '';
-          console.log(`Requête: "${query}"`);
+          debugLog(`Requête reçue: "${query}"`);
           
           // Vérifier si la requête est médicale
           const isMedicalQuery = medicalKeywords.some(keyword => 
@@ -74,7 +138,7 @@ function startServer(port = 3000) {
           );
           
           if (isMedicalQuery) {
-            console.log('Requête médicale détectée');
+            debugLog('Requête médicale détectée');
             // Réponse pour une requête médicale
             ws.send(JSON.stringify({
               jsonrpc: '2.0',
@@ -97,7 +161,7 @@ function startServer(port = 3000) {
               }
             }));
           } else {
-            console.log('Requête non médicale');
+            debugLog('Requête non médicale');
             // Réponse vide pour une requête non médicale
             ws.send(JSON.stringify({
               jsonrpc: '2.0',
@@ -109,6 +173,7 @@ function startServer(port = 3000) {
           }
         }
         else {
+          debugLog(`Méthode non gérée: ${jsonMessage.method}`);
           // Répondre aux autres méthodes
           ws.send(JSON.stringify({
             jsonrpc: '2.0',
@@ -135,9 +200,18 @@ function startServer(port = 3000) {
       }
     });
 
-    ws.on('close', () => {
-      console.log('Client déconnecté');
+    ws.on('close', (code, reason) => {
+      debugLog('Connexion WebSocket fermée', { code, reason: reason.toString() });
     });
+
+    ws.on('error', (error) => {
+      console.error('Erreur WebSocket:', error);
+    });
+  });
+
+  // Gestion des erreurs du serveur WebSocket
+  wss.on('error', (error) => {
+    console.error('Erreur du serveur WebSocket:', error);
   });
 
   // Démarrer le serveur
