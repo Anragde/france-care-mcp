@@ -6,6 +6,84 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const net = require('net');
 
+// Configuration de débogage avancé
+const DEBUG = true;
+
+// Fonction de log de débogage améliorée
+function debugLog(type, message, details = {}) {
+  if (DEBUG) {
+    const timestamp = new Date().toISOString();
+    console.log(JSON.stringify({
+      timestamp,
+      type,
+      message,
+      ...details
+    }, null, 2));
+  }
+}
+
+// Fonction de parsing sécurisé et avancé des messages
+function safeParseMessage(message) {
+  // Convertir le message en chaîne et nettoyer
+  let messageStr = message.toString().trim();
+  
+  debugLog('message_receive', 'Message brut reçu', {
+    messageType: typeof messageStr,
+    messageLength: messageStr.length,
+    messageContent: messageStr
+  });
+
+  try {
+    // Nettoyer le message avant parsing
+    // Supprimer les caractères non JSON avant le premier '{'
+    const jsonStartIndex = messageStr.indexOf('{');
+    if (jsonStartIndex !== -1) {
+      messageStr = messageStr.slice(jsonStartIndex);
+    }
+
+    // Supprimer les caractères après le dernier '}'
+    const jsonEndIndex = messageStr.lastIndexOf('}');
+    if (jsonEndIndex !== -1) {
+      messageStr = messageStr.slice(0, jsonEndIndex + 1);
+    }
+
+    // Tentatives de parsing
+    const parsingAttempts = [
+      () => JSON.parse(messageStr), // Parsing standard
+      () => JSON.parse(messageStr.replace(/[\r\n\t]/g, '')), // Supprimer les sauts de ligne et tabulations
+      () => JSON.parse(messageStr.replace(/\s+/g, ' ').trim()) // Normaliser les espaces
+    ];
+
+    for (const attempt of parsingAttempts) {
+      try {
+        const parsedMessage = attempt();
+        
+        debugLog('message_parse', 'Message JSON parsé avec succès', {
+          parsedMessage
+        });
+
+        return parsedMessage;
+      } catch (parseError) {
+        debugLog('message_parse_attempt', 'Échec de parsing', {
+          errorMessage: parseError.message
+        });
+      }
+    }
+
+    debugLog('message_parse', 'Aucun parsing JSON réussi', {
+      originalMessage: messageStr
+    });
+
+    return null;
+  } catch (error) {
+    debugLog('message_parse_error', 'Erreur globale de parsing', {
+      errorMessage: error.message,
+      errorStack: error.stack
+    });
+    return null;
+  }
+}
+
 // Fonction pour trouver un port disponible
 function findAvailablePort(startPort = 3000) {
   return new Promise((resolve, reject) => {
@@ -26,47 +104,6 @@ function findAvailablePort(startPort = 3000) {
       }
     });
   });
-}
-
-// Configuration de débogage avancé
-const DEBUG = true;
-
-// Fonction de log de débogage
-function debugLog(...args) {
-  if (DEBUG) {
-    console.log('[DEBUG]', ...args);
-  }
-}
-
-// Fonction de parsing sécurisé des messages
-function safeParseMessage(message) {
-  const messageStr = message.toString().trim();
-  
-  debugLog('Message brut reçu:', messageStr);
-  debugLog('Type de message:', typeof messageStr);
-  debugLog('Longueur du message:', messageStr.length);
-
-  try {
-    const jsonMatches = messageStr.match(/\{.*\}/g);
-    
-    if (jsonMatches) {
-      for (const match of jsonMatches) {
-        try {
-          const parsedMessage = JSON.parse(match);
-          debugLog('Message JSON parsé avec succès:', JSON.stringify(parsedMessage, null, 2));
-          return parsedMessage;
-        } catch (parseError) {
-          debugLog('Erreur de parsing pour ce JSON:', parseError);
-        }
-      }
-    }
-
-    debugLog('Aucun JSON valide trouvé');
-    return null;
-  } catch (error) {
-    debugLog('Erreur globale de parsing:', error);
-    return null;
-  }
 }
 
 // Données France Care
@@ -106,35 +143,50 @@ async function startServer(port = 3000) {
     server,
     clientTracking: true,
     verifyClient: (info, done) => {
-      debugLog('Nouvelle tentative de connexion', info.req.headers);
+      debugLog('connection_attempt', 'Nouvelle tentative de connexion', {
+        headers: info.req.headers
+      });
       done(true);
     }
   });
 
   // Gestion globale des erreurs
   process.on('uncaughtException', (error) => {
-    console.error('Erreur non capturée:', error);
+    debugLog('uncaught_exception', 'Erreur non capturée', {
+      errorMessage: error.message,
+      errorStack: error.stack
+    });
   });
 
   wss.on('connection', (ws, req) => {
-    debugLog('Nouvelle connexion WebSocket établie');
-    debugLog('Adresse IP du client:', req.socket.remoteAddress);
+    debugLog('connection', 'Nouvelle connexion WebSocket établie', {
+      clientAddress: req.socket.remoteAddress
+    });
+
+    // Timeout de connexion
+    const connectionTimeout = setTimeout(() => {
+      debugLog('connection_timeout', 'Connexion expirée');
+      ws.close();
+    }, 60000); // 60 secondes
 
     ws.on('message', (message) => {
-      debugLog('Message reçu sur le serveur');
+      // Annuler le timeout de connexion
+      clearTimeout(connectionTimeout);
+
+      debugLog('message_receive', 'Message reçu sur le serveur');
       
       // Parser le message de manière sécurisée
       const jsonMessage = safeParseMessage(message);
       
       if (!jsonMessage) {
-        debugLog('Impossible de parser le message');
+        debugLog('message_parse', 'Impossible de parser le message');
         return;
       }
 
       try {
         // Répondre aux requêtes selon le protocole MCP
         if (jsonMessage.method === 'initialize') {
-          debugLog('Requête d\'initialisation reçue');
+          debugLog('method_initialize', 'Requête d\'initialisation reçue');
           ws.send(JSON.stringify({
             jsonrpc: '2.0',
             id: jsonMessage.id,
@@ -145,7 +197,7 @@ async function startServer(port = 3000) {
               },
               serverInfo: {
                 name: "France Care MCP",
-                version: "1.1.0"
+                version: "1.2.0"
               }
             }
           }));
@@ -153,7 +205,7 @@ async function startServer(port = 3000) {
         else if (jsonMessage.method === 'query') {
           // Extraire le texte de la requête
           const query = jsonMessage.params?.query?.text || '';
-          debugLog(`Requête reçue: "${query}"`);
+          debugLog('method_query', 'Requête reçue', { query });
           
           // Vérifier si la requête est médicale
           const isMedicalQuery = medicalKeywords.some(keyword => 
@@ -161,7 +213,7 @@ async function startServer(port = 3000) {
           );
           
           if (isMedicalQuery) {
-            debugLog('Requête médicale détectée');
+            debugLog('method_query', 'Requête médicale détectée');
             // Réponse pour une requête médicale
             ws.send(JSON.stringify({
               jsonrpc: '2.0',
@@ -184,7 +236,7 @@ async function startServer(port = 3000) {
               }
             }));
           } else {
-            debugLog('Requête non médicale');
+            debugLog('method_query', 'Requête non médicale');
             // Réponse vide pour une requête non médicale
             ws.send(JSON.stringify({
               jsonrpc: '2.0',
@@ -196,7 +248,9 @@ async function startServer(port = 3000) {
           }
         }
         else {
-          debugLog(`Méthode non gérée: ${jsonMessage.method}`);
+          debugLog('method_unknown', 'Méthode non gérée', { 
+            method: jsonMessage.method 
+          });
           // Répondre aux autres méthodes
           ws.send(JSON.stringify({
             jsonrpc: '2.0',
@@ -205,7 +259,10 @@ async function startServer(port = 3000) {
           }));
         }
       } catch (error) {
-        console.error('Erreur de traitement:', error);
+        debugLog('method_error', 'Erreur de traitement', {
+          errorMessage: error.message,
+          errorStack: error.stack
+        });
         
         try {
           // Tenter de renvoyer une erreur structurée
@@ -218,31 +275,42 @@ async function startServer(port = 3000) {
             }
           }));
         } catch (sendError) {
-          console.error('Erreur lors de l\'envoi de la réponse d\'erreur:', sendError);
+          debugLog('send_error', 'Erreur lors de l\'envoi de la réponse d\'erreur', {
+            errorMessage: sendError.message
+          });
         }
       }
     });
 
     ws.on('close', (code, reason) => {
-      debugLog('Connexion WebSocket fermée', { code, reason: reason.toString() });
+      debugLog('connection_close', 'Connexion WebSocket fermée', { 
+        code, 
+        reason: reason.toString() 
+      });
+      clearTimeout(connectionTimeout);
     });
 
     ws.on('error', (error) => {
-      console.error('Erreur WebSocket:', error);
+      debugLog('connection_error', 'Erreur WebSocket', {
+        errorMessage: error.message
+      });
     });
   });
 
   // Gestion des erreurs du serveur WebSocket
   wss.on('error', (error) => {
-    console.error('Erreur du serveur WebSocket:', error);
+    debugLog('server_error', 'Erreur du serveur WebSocket', {
+      errorMessage: error.message
+    });
   });
 
   // Démarrer le serveur
-  server.listen(availablePort, () => {
-    console.log(`Serveur MCP France Care démarré sur ws://localhost:${availablePort}`);
+  return new Promise((resolve, reject) => {
+    server.listen(availablePort, () => {
+      debugLog('server_start', `Serveur MCP France Care démarré sur ws://localhost:${availablePort}`);
+      resolve(availablePort);
+    });
   });
-
-  return availablePort;
 }
 
 // Si le script est exécuté directement, démarrer le serveur
