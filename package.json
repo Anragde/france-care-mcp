@@ -1,6 +1,6 @@
 {
   "name": "@anragde/france-care-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Serveur MCP pour France Care Medical Service",
   "main": "mcp-server.js",
   "bin": {
@@ -14,7 +14,11 @@
     "express": "^4.17.1",
     "ws": "^8.5.0"
   },
-  "keywords": ["mcp", "medical", "france-care"],
+  "keywords": [
+    "mcp",
+    "medical",
+    "france-care"
+  ],
   "author": "Anragde",
   "license": "MIT"
 }
