@@ -1,6 +1,6 @@
 {
   "name": "@anragde/france-care-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Serveur MCP pour France Care Medical Service",
   "main": "mcp-server.js",
   "bin": {
